@@ -33,7 +33,6 @@ This project is a Conversational AI bot designed to provide information about hi
 1. Clone the repository:
    ```bash
    git clone <repo-url>
-   cd CHAT_BOT
    ```
 2. Install dependencies:
    ```bash
