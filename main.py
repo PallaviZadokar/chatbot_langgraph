@@ -12,7 +12,7 @@ from langgraph.graph.message import add_messages
 from typing import Annotated
 from typing_extensions import TypedDict
 
-torch.classes.__path__ = []
+torch.classes.__path__ = [os.path.join(torch.__path__[0], torch.classes.__file__)] 
 
 # Load NLP model
 nlp = spacy.load("en_core_web_trf")
