@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import random
 import configparser
@@ -16,7 +17,8 @@ nlp = spacy.load("en_core_web_trf")
 
 # Read configuration
 config = configparser.ConfigParser()
-config.read("config.ini")
+config_path = os.path.join(os.getcwd(), ".streamlit", "config.ini")
+config.read(config_path)
 
 groq_api_key = config["SETTINGS"].get("GROQ_API_KEY")
 email_address = config["SETTINGS"].get("EMAIL_ADDRESS")
