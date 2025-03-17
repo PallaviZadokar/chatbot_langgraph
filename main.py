@@ -19,7 +19,12 @@ except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
 # Load NLP model
-nlp = spacy.load("en_core_web_trf")
+try:
+    nlp = spacy.load("en_core_web_trf")
+except OSError:
+    print("Downloading en_core_web_trf model...")
+    os.system("python -m spacy download en_core_web_trf")
+    nlp = spacy.load("en_core_web_trf")
 
 # Read configuration
 config = configparser.ConfigParser()
