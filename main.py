@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 import random
+import asyncio
 import configparser
 import smtplib
 import spacy
@@ -11,6 +12,11 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from typing import Annotated
 from typing_extensions import TypedDict
+
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 # Load NLP model
 nlp = spacy.load("en_core_web_trf")
