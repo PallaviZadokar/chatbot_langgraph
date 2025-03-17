@@ -1,134 +1,166 @@
-import os
-import configparser
+import streamlit as st
 import random
-import ssl
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+import configparser
+import smtplib
+import spacy
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from typing import Annotated
 from typing_extensions import TypedDict
 
+# Load NLP model
+nlp = spacy.load("en_core_web_trf")
+
+# Read configuration
 config = configparser.ConfigParser()
 config.read("config.ini")
 
 groq_api_key = config["SETTINGS"].get("GROQ_API_KEY")
-sendgrid_api_key = config["SETTINGS"].get("APIKEY")
-sender_email = config["SETTINGS"].get("FROM")
+email_address = config["SETTINGS"].get("EMAIL_ADDRESS")
+email_password = config["SETTINGS"].get("EMAIL_PASSWORD")
 
-ssl._create_default_https_context = ssl._create_unverified_context
+if not email_address or not email_password or not groq_api_key:
+    st.error("Error: Missing configuration values. Check config.ini.")
+    st.stop()
 
-if not sendgrid_api_key or not sender_email or not groq_api_key:
-    print("Error: Missing API key(s). Check config.ini.")
-    exit(1)
-
+# Initialize LLM
 llm = ChatGroq(groq_api_key=groq_api_key, model_name="Gemma2-9b-It")
 
-
+# Define conversation state
 class State(TypedDict):
     messages: Annotated[list, add_messages]
     user_email: str
-    otp: str
     otp_verified: bool
 
-
+# Generate OTP
 def generate_otp():
     return str(random.randint(100000, 999999))
 
-
-def send_otp(email, otp):
+# Send OTP via SMTP
+def send_otp_via_smtp(email, otp):
     subject = "Email Verification OTP"
-    html_content = f"<p>Your OTP is: <strong>{otp}</strong></p>"
-    message = Mail(from_email=sender_email, to_emails=email, subject=subject, html_content=html_content)
-    
+    body = f"Your OTP is: {otp}"
+
+    msg = MIMEMultipart()
+    msg["From"] = email_address
+    msg["To"] = email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+
     try:
-        sg = SendGridAPIClient(sendgrid_api_key)
-        response = sg.send(message)
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(email_address, email_password)
+        server.sendmail(email_address, email, msg.as_string())
+        server.quit()
         return "OTP sent successfully!"
     except Exception as e:
         return f"Error sending OTP: {e}"
-    
 
+# Extract location from user query
+def extract_location(user_message):
+    doc = nlp(user_message)
+    for ent in doc.ents:
+        if ent.label_ in ["GPE", "LOC"]:  
+            return ent.text
+    return None
+
+# Get response from LLM
+def chatbot_response(user_message):
+    location = extract_location(user_message)
+    modified_query = f"List historical monuments near {location}." if location else user_message
+    response = llm.invoke([{"role": "user", "content": modified_query}])
+    return response.content
+
+# Chatbot node
 def chatbot(state: State):
-    response = llm.invoke(state['messages'])
-    return {"messages": response}
+    last_message = state["messages"][-1].content.lower()
+    historical_keywords = ["monument", "historical", "heritage", "ruins", "castle", "temple", "fort", "palace", "tomb"]
+    location = extract_location(last_message)
 
-
-def ask_for_email(state: State):
-    last_message_obj = state["messages"][-1] if state["messages"] else None
-
-    # Ensure it's a string (handle different object types)
-    if hasattr(last_message_obj, "content"):
-        last_message = last_message_obj.content.lower()
+    if location or any(keyword in last_message for keyword in historical_keywords):
+        response = chatbot_response(last_message)
+        return {"messages": [response]}
     else:
-        last_message = str(last_message_obj).lower() if last_message_obj else ""
+        return {"messages": ["I specialize in historical monuments. Please ask about historical monuments only ."]}
 
-    trigger_keywords = ["historical places", "places to visit", "travel", "monument", "recommendation"]
-    
+# Ask for email
+def ask_for_email(state: State):
+    last_message = state["messages"][-1].content.lower()
+    trigger_keywords = ["historical places", "travel", "monument", "recommendation"]
+
     if any(keyword in last_message for keyword in trigger_keywords):
-        email = input("Assistant: Would you like more details via email? \nUser: ")
+        email = st.text_input("Please share your email if you would like more details about historical monuments via email:", key="email")
 
-        if email.lower() in ["no", "n", "skip"]:
-            return {"messages": ["No worries! Have a great day!"]}
+        if email:
+            if "user_email" in st.session_state and st.session_state.user_email == email:
+                return {"messages": [f"OTP already sent to {st.session_state.user_email}. Please verify."]}
 
-        state["user_email"] = email  # Store user email
-        return {"messages": [f"Thanks! I'll send a verification code to {state['user_email']}."], "user_email": state["user_email"]}
+            st.session_state.user_email = email
+            st.session_state.otp = generate_otp()
+            st.session_state.otp_verified = False
+            st.session_state.retry_count = 0
+
+            send_otp_via_smtp(email, st.session_state.otp)
+            return {"messages": [f"OTP has been sent to {st.session_state.user_email}. Please verify."]}
+
+            if email.lower() in ["no", "n", "skip"]:
+                return {"messages": ["No worries! Have a great day!"]}
 
     return {}
 
 
-def send_otp_node(state: State):
-    email = state.get("user_email")
 
-    if not email:
-        return {}
-
-    otp = generate_otp()
-    state["otp"] = otp  
-    response = send_otp(email, otp)
-    return {"messages": "I have sent a 6-digit code to your email. Please verify it.", "otp": otp}
-
+# Verify OTP node
 def verify_otp(state: State):
-    user_otp = input("Enter OTP: ")
+    if "retry_count" not in st.session_state:
+        st.session_state.retry_count = 0
 
-    if user_otp == state['otp']:
-        state['otp_verified'] = True
-        return {"messages": "Great, OTP verified! I'll email you soon."}
-    else:
-        return {"messages": "Incorrect OTP. Please try again."}
-    
+    user_otp = st.text_input("Enter OTP:", key="otp_input")
 
-    
+    if user_otp:
+        if "otp" in st.session_state and user_otp == st.session_state.otp:
+            st.session_state.otp_verified = True
+            st.success("OTP verified! You will receive details soon.")
+            return {"messages": ["OTP verified! You will receive details soon."]}
+
+        # Handle incorrect OTP attempts
+        st.session_state.retry_count += 1
+        attempts_left = 3 - st.session_state.retry_count
+
+        if attempts_left > 0:
+            st.error(f"Incorrect OTP. Attempts left: {attempts_left}")
+        else:
+            del st.session_state.otp  # Clear OTP after too many failed attempts
+            return {"messages": ["Too many failed attempts. Please request a new OTP."]}
+
+    return {}
+
+# Build graph
 graph_builder = StateGraph(State)
 graph_builder.add_node("chatbot", chatbot)
 graph_builder.add_node("ask_for_email", ask_for_email)
-graph_builder.add_node("send_otp", send_otp_node)
 graph_builder.add_node("verify_otp", verify_otp)
 
-graph_builder.add_edge(START, "chatbot")  
-graph_builder.add_edge("chatbot", "ask_for_email")  
-graph_builder.add_edge("ask_for_email", "send_otp")  
-graph_builder.add_edge("send_otp", "verify_otp")  
+graph_builder.add_edge(START, "chatbot")
+graph_builder.add_edge("chatbot", "ask_for_email")
+graph_builder.add_edge("ask_for_email", "verify_otp")
 graph_builder.add_edge("verify_otp", END)
 
 graph = graph_builder.compile()
 
+# Streamlit UI
+st.title("Historical Monuments Chatbot")
+user_input = st.text_input("Hey, I am a historical chatbot! Tell me how I can help you regarding historical monument queries")
 
-while True:
-    user_input = input("User: ")
-    
-    if user_input.lower() in ["quit", "q"]:
-        print("Goodbye!")
-        break
-    
-    state = {"messages": [("user", user_input)], "user_email": "", "otp": "", "otp_verified": False}
-    
+if user_input:
+    state = {"messages": [{"role": "user", "content": user_input}], "user_email": "", "otp_verified": False}
+
     for event in graph.stream(state):
         for value in event.values():
-            if value and isinstance(value, dict) and "messages" in value and value["messages"]:
-                if isinstance(value["messages"], list):
-                    for msg in value["messages"]:
-                        print("Assistant:", msg.content if hasattr(msg, "content") else msg)
-                else:
-                    print("Assistant:", value["messages"].content if hasattr(value["messages"], "content") else value["messages"])
+            if value and isinstance(value, dict) and "messages" in value:
+                for msg in value["messages"]:
+                    st.write(f"Assistant: {msg}")
