@@ -12,19 +12,22 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from typing import Annotated
 from typing_extensions import TypedDict
+from contextlib import contextmanager
 
-
-def get_or_create_eventloop():
+@contextmanager
+def setup_event_loop():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        return asyncio.get_event_loop()
-    except RuntimeError as ex:
-        if "There is no current event loop in thread" in str(ex):
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            return asyncio.get_event_loop()
+        yield loop
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
 
-loop = get_or_create_eventloop()
-asyncio.set_event_loop(loop)
+# Use the context manager to create an event loop
+with setup_event_loop() as loop:
+    # Import libraries that use asyncio here
+    import torch  # Or other libraries that might use asyncio
 
 # Load NLP model
 nlp = spacy.load("en_core_web_trf")
