@@ -1,7 +1,6 @@
 import os
 import streamlit as st
 import random
-import asyncio
 import configparser
 import smtplib
 import spacy
@@ -12,22 +11,8 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from typing import Annotated
 from typing_extensions import TypedDict
-from contextlib import contextmanager
 
-@contextmanager
-def setup_event_loop():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        yield loop
-    finally:
-        loop.close()
-        asyncio.set_event_loop(None)
-
-# Use the context manager to create an event loop
-with setup_event_loop() as loop:
-    # Import libraries that use asyncio here
-    import torch  # Or other libraries that might use asyncio
+torch.classes.__path__ = []
 
 # Load NLP model
 nlp = spacy.load("en_core_web_trf")
