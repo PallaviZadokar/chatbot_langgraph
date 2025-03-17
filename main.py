@@ -4,6 +4,7 @@ import random
 import configparser
 import smtplib
 import spacy
+import torch
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from langchain_groq import ChatGroq
